@@ -53,8 +53,11 @@ def trigger_build(text: str = Form(...), response_url: str = Form(default=None))
     # Immediate Slack message
     return {
         "response_type": "in_channel",
-        "text": f"🚀 Build started for *{branch}* with workflow *{workflow_id}*\n< {build_url} | View Build >\nI'll update you when it finishes!"
+        "text": f"🚀 Build started for *{branch}* with workflow *{workflow_id}*\n"
+                f"<{build_url}|👀 View Build & Artifacts>\n"
+                "I'll update you when it finishes! ⏳"
     }
+
 
 
 @app.post("/bitrise-webhook")

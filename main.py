@@ -23,7 +23,7 @@ WORKFLOWS = {
     "uat-debug": "uatQADebug"
 }
 
-# Store response URLs temporarily for webhook updates
+# Store Slack message metadata to update in-place
 build_tracking = {}
 
 # -------------------------------
@@ -43,10 +43,10 @@ async def trigger_build(background_tasks: BackgroundTasks, text: str = Form(...)
     except Exception:
         return {"text": "❌ Invalid format. Use `/build-im-retail-app <branch> <workflow>`"}
 
-    # Respond immediately to Slack (avoid timeout)
+    # Respond immediately to Slack (prevents timeout)
     ack_message = {
         "response_type": "in_channel",
-        "text": f"🚀 Build request received for *{branch}* → workflow *{workflow_id}*\n⏳ Hang tight..."
+        "text": f":rocket: Build request received for *{branch}* → workflow *{workflow_id}*\n:hourglass_flowing_sand: Hang tight..."
     }
 
     # Trigger Bitrise build asynchronously
@@ -71,13 +71,16 @@ def start_bitrise_build(branch: str, workflow_id: str, response_url: str):
 
         build_slug = resp.json().get("build_slug")
         build_url = f"https://app.bitrise.io/build/{build_slug}?tab=artifacts"
-        build_tracking[build_slug] = {"response_url": response_url}
 
+        # Track Slack response URL & placeholder ts for updating message
+        build_tracking[build_slug] = {"response_url": response_url, "build_url": build_url}
+
+        # Post initial build started message
         msg = {
             "response_type": "in_channel",
-            "text": f":rocket: *Build started!* Branch: *{branch}* | Workflow: *{workflow_id}*\n"
+            "text": f":rocket: Build started! Branch: *{branch}* | Workflow: *{workflow_id}*\n"
                     f"<{build_url}|🔗 View Build & Artifacts>\n"
-                    f"🕒 I’ll update you once it’s done!"
+                    f"⏳ I’ll update you once it’s done!"
         }
         requests.post(response_url, json=msg)
 
@@ -90,15 +93,24 @@ def start_bitrise_build(branch: str, workflow_id: str, response_url: str):
 # -------------------------------
 @app.post("/bitrise-webhook")
 async def bitrise_webhook(request: Request):
-    """Receives Bitrise build completion webhook and updates Slack."""
+    """Receives Bitrise build completion webhook and updates Slack in-place."""
     payload = await request.json()
     print("Received webhook:", payload)
 
     build_slug = payload.get("build_slug")
-    status_text = payload.get("status_text", "Finished")
+    status = payload.get("status")
     build_url = payload.get("build_url", f"https://app.bitrise.io/build/{build_slug}")
 
-    # Retrieve Slack callback
+    # Map Bitrise status code → emoji + text
+    if status == 0:
+        emoji, status_text = "✅", "Succeeded"
+    elif status == 1:
+        emoji, status_text = "❌", "Failed"
+    elif status == 2:
+        emoji, status_text = "🛑", "Aborted"
+    else:
+        emoji, status_text = "⚙️", "Unknown"
+
     info = build_tracking.pop(build_slug, None)
     if not info or "response_url" not in info:
         print("⚠️ No response_url found for this build")
@@ -125,8 +137,7 @@ async def bitrise_webhook(request: Request):
     except Exception as e:
         print("Artifact fetch error:", e)
 
-    # Compose Slack message
-    emoji = "✅" if "success" in status_text.lower() else "❌"
+    # Compose Slack message (updating original message)
     msg = {
         "response_type": "in_channel",
         "text": (
@@ -155,7 +166,7 @@ async def keep_alive():
             requests.get(f"{SELF_URL}/", timeout=10)
         except Exception as e:
             print("Keep-alive ping failed:", e)
-        await asyncio.sleep(20)  # 20 seconds
+        await asyncio.sleep(240)  # 4 minutes
 
 
 @app.on_event("startup")
